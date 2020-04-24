@@ -1,0 +1,1252 @@
+---
+title: "North Alaska Peninsula to Washington Chum salmon baseline"
+author: "Andy Barclay"
+date: "4/6/20"
+output: 
+  html_notebook:
+  toc: true
+  toc_depth: 3
+---
+
+This R Markdown documents a partal coastwide baseline analysis for chum slamon. 
+This baseline includes genetic data populations of chum salmon from North Alaska Peninsula to Washington and anlyzed for the 96 WASSIP SNPs.  This baseline will fill in the gap of populations between two previously-published data sets; B.C. to Washington - [Small et al. (2015)](https://www.tandfonline.com/doi/full/10.1080/02755947.2015.1055014?scroll=top&needAccess=true) and Alaska Peninsula and Kodiak - [Petrou et al. (2013)](https://onlinelibrary.wiley.com/doi/full/10.1111/mec.12543)
+
+## Set up workspace
+### Get functions and load tidy packages
+```{r workspace setup, echo=TRUE}
+
+#save.image("V:\\Analysis\\5_Coastwide\\Chum\\SPen2WA_Chum_baseline\\NPen2WA_Chum_baseline.Rdata")
+
+load("V:\\Analysis\\5_Coastwide\\Chum\\SPen2WA_Chum_baseline\\NPen2WA_Chum_baseline_raw.Rdata")
+
+source("C:\\Users\\awbarclay\\Documents\\R\\GitHubCloneFunctions.R")#GCL functions
+
+source("V:\\Analysis\\Staff\\Andy Barclay\\R\\New Functions\\WorkspaceFolders.GCL.R")#A function I wrote
+
+library("tidyverse")
+
+```
+### Create output folders 
+```{r create folders, echo=TRUE, message=FALSE, eval=FALSE}
+
+#WorkspaceFolders.GCL(Folders=c("output","objects","data","rubias","GENEPOP","FSTAT","GIS","GDA"),Subfolders=list(rubias=c("baseline","mixture","output")),wd=getwd())
+
+```
+
+## Data Retrieval
+### Get collection information
+The is the collection information for all of the Chum salmon baseline collections we have in LOKI.
+Some of the location names and lat/longs have been corrected and collection have been ordered geographically.
+```{r collection information, echo=FALSE}
+
+collection_info <- read_csv("data/NAKPen2WA_ordered_collection_info.csv")
+collection_info
+
+```
+### Create locus control and pull data from LOKI
+Creating the "LocusControl" object and retrieving genotypes from LOKI. The LocusControl object is created prior to pulling genotype data. Genotypic data were read into R with the RJDBC package (Urbanek 2018) using the LOKI2R.GCL function. 
+```{r locus control, echo=TRUE, eval=FALSE}
+
+#CreateLocusControl.GCL(markersuite = "ChumGolden2011_96SNPs", username ="awbarclay", password = password)#Locus control
+
+sillyvec578 <- collection_info$Silly_Code
+
+#LOKI2R.GCL(sillyvec=c("CHJOS92UW","CMZAC09"),username="awbarclay",password)#Pull Data from LOKI
+
+loci <- LocusControl$locusnames %>% 
+  sort() # Initial loci object. This will be used by many fuctions.  
+
+#save.image("V:/Analysis/5_Coastwide/Chum/SPen2WA_Chum_baseline/NPen2WA_Chum_baseline_raw.Rdata")
+
+```
+There are two collections from 1992 that begin with a number.  Using PoolCollections function to change the name of the sillys becuase R doesn't like objects that begin with a number.
+```{r new silly name, echo=T}
+
+PoolCollections.GCL(collections = "5P92EKEE", loci = loci, newname = "CMKETA92")
+
+PoolCollections.GCL(collections = "5P92HWHN", loci = loci, newname = "CMWHN92")
+
+```
+
+### Create new collections object
+There are 383 chum collections that have data for some of the 96 SNPs in the WASSIP panel.
+```{r sillyvec, echo=FALSE}
+
+tmp <- gsub(x = ls(pattern = ".gcl") [-c(1,2,385)], pattern = ".gcl", replacement = "")
+
+
+collections383 <-  collection_info %>% 
+  mutate(Silly_Code = gsub(x= Silly_Code, pattern = "5P92EKEE", replacement = "CMKETA92"))%>% 
+  mutate(Silly_Code = gsub(x= Silly_Code, pattern = "5P92HWHN", replacement = "CMWHN92")) %>% 
+  filter(Silly_Code%in%tmp) %>% 
+  arrange(Order) %>% 
+  mutate(Silly_Code = factor(Silly_Code, level = unique(Silly_Code)))
+
+write_csv(collections383, "output/collections383.csv")
+
+collections383
+
+```
+### Check for genotype holes
+There some collections with a lot of missing data. Here I'm using the SampleSizeByLocus.GCL function get the number of samples with  data at each locus.
+```{r genotype holes}
+
+samp_size_by_loc <- SampSizeByLocus.GCL(sillyvec = collections383$Silly_Code, loci = loci) %>% 
+  as_tibble(rownames = "silly")
+
+write_csv(samp_size_by_loc, "output/sample_size_by_locus.csv")
+
+samp_size_by_loc
+
+```
+The dark cell in the heatmap are where collections are missing data at some loci.
+```{r heatmap of sample sizes by locus, echo=FALSE}
+
+samp_size_by_loc %>% 
+  gather(-silly, key = "locus", value = "n") %>% 
+  mutate(data = case_when(n>0~1, 
+                          TRUE~n)) %>% 
+  ggplot(aes(y = locus, x = silly, fill = data)) + 
+  geom_tile()
+
+```
+Here I'm creating a new sillyvec and collections objects that only contain the sillys for collection that have all 96 of the WASSIP loci. 
+```{r drop collections}
+
+sillyvec338 <- samp_size_by_loc %>% 
+  gather(-silly, key = "locus", value = "n") %>% 
+  mutate(all96 = case_when(n>0~1), silly = factor(silly, levels = unique(silly))) %>% 
+  group_by(silly) %>% 
+  summarize(nloci = sum(all96, na.rm = TRUE)) %>% 
+  filter(nloci==96) %>% 
+  pull(silly) %>% 
+  as.character()
+
+collections338 <- collections383 %>% 
+  filter(Silly_Code%in%sillyvec338)
+
+write_csv(collections338, "output/collections338.csv")## Writing out to put in summary excel
+
+collections338
+
+```
+## Map of collections
+These are the locations were the samples were collected.
+```{r collections map, echo=FALSE, fig.height=8, fig.width=8, message=FALSE, warning=FALSE}
+
+require(leaflet)
+require(mapview)
+require(plotly)
+require(rgdal)
+
+base_coords <- collections383 %>% 
+  mutate(Quadrant=factor(Region, levels = unique(Region)),
+         Color = case_when(Region=="Westward"~"blue",
+                           Region=="Southcentral Alaska"~"red",
+                           Region=="North Gulf Coast"~"orange",
+                           Region=="Northern Southeast"~"green",
+                           Region=="Southern Southeast"~"magenta",
+                           Region=="British Columbia"~"cyan",
+                           Region=="Washington/Idaho"~"purple")) %>% 
+  mutate(Color=gplots::col2hex(Color))
+
+base_coords %>% 
+  leaflet() %>%
+  setView(lng = -144, lat = 54, zoom = 4) %>% 
+  addProviderTiles(providers$Esri.WorldTopoMap ) %>% #Esri.WorldShadedRelief
+  addCircleMarkers(lng=~Longitude,lat=~Latitude, color = ~Color, popup = ~Silly_Code, fillOpacity = 100, radius = 1) %>% 
+  #addPolylines(data=awc,weight = 3,color = hydro_col) %>% 
+  #addPolylines(data=hydro_I_rivers,weight = 3,color = hydro_col) %>% 
+  addScaleBar(position = "bottomleft",options = scaleBarOptions(imperial = FALSE)) %>% 
+  #addMiniMap( position = "bottomright") %>% 
+  addLegend("topright", color = unique(base_coords$Color), values = NULL,
+    title = "Region",
+    labels = unique(base_coords$Region),
+    labFormat = labelFormat(),
+    opacity = 1
+  )
+  
+```
+### Dump original data before quality control
+Here I'm dumping out the data - as a dataframe - for the 338 collections that have data at all 96 SNPs so failure rates can be calcuated on the final baseline pops after quality control measures have been take.
+```{r initial scores tibble, echo=FALSE}
+
+#RemoveNAindv.GCL(sillyvec = sillyvec338) #Not needed for this baseline. This removes individuals that were not genotyped for the SNPs in LocusControl 
+
+# Pool all collections in to one master silly
+PoolCollections.GCL(collections = sillyvec338, loci = loci, newname = "master")
+  
+# Tibble of Dose 1 scores and attributes
+master.tbl <- dplyr::bind_cols(as_tibble(master.gcl$scores[, , "Dose1"]), as_tibble(master.gcl$attributes[, c("SILLY_CODE", "PLATE_ID", "SillySource")])) %>% 
+ tidyr::gather(locus, genotype, -SILLY_CODE, -PLATE_ID, -SillySource) %>% 
+ dplyr::rename(silly = SILLY_CODE, plate = PLATE_ID, silly_source = SillySource)
+  
+ rm(master.gcl, pos = 1)
+  
+ 
+dput(master.tbl,"objects/master.tbl.txt")
+master.tbl
+
+```
+
+### Quality Control Measures
+Creating a function to get sample sizes from *.gcl objects.
+```{r sample size function}
+
+SampSize <- function(sillyvec){
+  
+ as.character(sapply(paste(sillyvec,".gcl",sep=''), function(x) get(x)$n))
+  
+}
+
+```
+These are the initial sample sizes. 
+```{r initial N, echo=FALSE}
+
+samples <- tibble(collection = sillyvec338, original = SampSize(sillyvec338))
+samples[,c("collection","original")]
+
+```
+#### Remove individuals missing data
+Here I'm using the 80% rule (missing data at 20% or more of loci; Dann et al. 2009) to identify individuals missing substantial genotypic data and removing them.  
+```{r missing loci, echo = TRUE}
+
+Missloci <- RemoveIndMissLoci.GCL(sillyvec = sillyvec338, proportion = 0.8)
+
+```
+The missloci column contains the sample sizes afer removing individuals with missing data
+```{r post missloci N, echo = FALSE}
+
+samples$missloci <- SampSize(sillyvec338)
+samples[,c("collection","original","missloci")]
+
+
+```
+Check for individuals within collections that have the same genotypes (duplicate individuals). These are the pairs of fish that had the same genotype at >99% of loci
+```{r duplicate check, echo = FALSE, include = TRUE, message = FALSE, warning=FALSE}
+
+#Creating a temp sillyvec so only collections with more than 1 individual are checked for duplicates. This wasn't nessecary with this baseline as all collections had more than one idivudual. When there are collections with only 1 sample they will cause the duplicate check function to bomb.
+sillyvec_temp <- samples %>%
+  filter(missloci > "1") %>% 
+  pull(collection)
+
+dupcheckNULLquantile <- CheckDupWithinSilly.GCL(sillyvec = sillyvec_temp, loci = loci, quantile = NULL, minproportion = 0.99)#Quantile NULL min proportion 0.99  
+
+dupcheckNULLquantile %>% 
+  modify("report") %>%
+  keep(~is_tibble(.x)) %>% 
+  bind_rows(.id = "silly")
+
+```
+One fish of each duplicate set was removed from the workspace. Here are fish IDs removed by silly code.
+```{r remove duplicates, echo = FALSE}
+
+removedDups <- RemoveDups.GCL(dupcheckNULLquantile)
+unlist(removedDups[!removedDups == "Nothing Removed"]) %>% 
+  as_tibble(rownames = "silly") #Gets the individuals removed from workspace
+
+```
+Sample sizes after removing duplicate and non baseline individuals.  I will add these sample sizes to the [Summary Workbook](SPen2WA_Chum_baseline_summary.xlsx). 
+```{r post dupcheck N, echo = FALSE}
+
+samples$AfterDup <- SampSize(sillyvec338)
+samples
+
+write_excel_csv(samples,"output/Baseline_Samples.csv")
+
+```
+Fisher's test for homogeneity of allele frequencies will give you ane error message and stop if you have nearly invariant loci. Check for invariant loci (minor allele occurs in less than 1% of genotypes) and remove them before pooling tests.  There are no invariant loci to remove.
+
+```{r fixed loci}
+
+Freq <- FreqPop.GCL(sillyvec338, loci = loci)
+
+Allele_Prop <- apply(Freq[,,"Allele 1"],2,sum)/(apply(Freq[,,"Allele 1"],2,sum)+apply(Freq[,,"Allele 2"],2,sum)) 
+
+Invariant_loci <- tibble(Locus=loci,Prop=Allele_Prop)%>%
+  filter(Prop<0.01|Prop>0.99)
+
+```
+## Pooling
+Running Hardy-Weinberg equillibrium (HWE) tests on collections and loci in GENEPOP prior to pooling. This way, the collections out of HWE can be excluded from further analysis. Usually when a collection is out of HWE it causes the pooled collection to be out of HWE. Collections and loci are considered out of HWE if the overall p-value across loci/pops is less than than alpha after adjusting for multiple tests (i.e., adjusted alpha = 0.05/nloci or 0.05/npops)
+
+There were 4 collections out of HWE: CM24MI06UW, CMOLDTOM86, CMNANA06, and CMBMI02F. The Nanaimo River collection (CMNAN06) has 245 samples, so it's on multiple extraction plates.  Check the individual extraction plates for HWE to see if this population can be kept after dropping out of HWE extractions.
+```{r Hardy-Weinberg check 1}
+
+HWEloci <- loci[LocusControl$ploidy==2]##Not including the three mitochondrial DNA markers because they will not be in HWE and could cause the overall pvalues by collection to be significant.
+
+#gcl2Genepop.GCL(sillyvec = sillyvec338, loci = HWEloci, path = "GENEPOP/NAKPen2WA_338coll_93loci")##Dump out a GENEPOP input file
+
+HWEtmp <- ReadGenepopHWE.GCL(file = "GENEPOP/NAKPen2WA_338coll_93loci.P")##Reading in GENEPOP output
+
+HWEout <- as.tibble(t(HWEtmp$SummaryPValues)) %>% 
+  mutate(pop = c(sillyvec338,"Overall Pops")) %>% 
+  select(pop,everything()) 
+
+write_excel_csv(HWEout,"output/HWE338collections93loci.csv")
+
+HWEout%>% 
+  filter(`Overall Loci`<= 0.05/338)
+
+```
+
+### Creating new "*.gcl" objects for each CMNAN06 extraction plate 
+
+The plate IDs are: 6366, 6367, and 6368
+```{r CMNANA06 plate IDS, echo=TRUE}
+
+Nanaimo_IDs <- CMNANA06.gcl$attributes %>% 
+  pull(PLATE_ID) %>% 
+  unique()
+
+Nanaimo_IDs
+
+```
+Using PoolCollections.GCL to create individual objects to test for HWE. There are three plates with 71, 91, and 77 samples, respectively.
+```{r Nanimo plate objects}
+
+for(ID in Nanaimo_IDs){
+  
+  tmp <- AttributesToIDs.GCL(silly = "CMNANA06", attribute = "PLATE_ID", matching = ID)
+  
+  PoolCollections.GCL(collections = "CMNANA06", loci = loci, IDs = list(CMNANA06 = tmp), newname = paste0("Nanaimo_", ID))
+  
+}
+
+Nanaimo_Sillys <- paste0("Nanaimo_", Nanaimo_IDs)
+
+SampSize(sillyvec = Nanaimo_Sillys)
+
+```
+After adjusting for multiple tests, plates 6366 and 6367 are out of HWE.  Drop these plates and use plate 6368 to represent the pop.
+```{r HWE in genepop for Nanaimo plates}
+
+gcl2Genepop.GCL(sillyvec = Nanaimo_Sillys, loci = HWEloci, path = "GENEPOP/NanaimoPlates_93loci")
+
+HWEtmp <- ReadGenepopHWE.GCL(file = "GENEPOP/NanaimoPlates_93loci.P")##Reading in GENEPOP output
+
+HWEout <- as.tibble(t(HWEtmp$SummaryPValues)) %>% 
+  mutate(pop = c(Nanaimo_Sillys,"Overall Pops")) %>% 
+  select(pop,everything())
+
+write_excel_csv(HWEout,"output/HWE_NanaimoPlates_93loci.csv")
+
+HWEout%>% 
+  filter(`Overall Loci`<= 0.05/3)
+
+```
+Here I'm saving the original Nanaimo River object with a new name and then overwritting the original object with the plate 6386 object.
+```{r new Nanaimo object}
+
+CMNANA06_old.gcl <- CMNANA06.gcl
+
+CMNANA06.gcl <- Nanaimo_6368.gcl
+
+```
+### Barling River 2015 collection
+The 2015 Barling River collection was sampled on three different dates throughout the run:"2015-07-09" "2015-08-03" "2015-09-11"
+This was done to check if there are early and late populations in Barling River. 
+```{r Barling dates}
+
+CMBARLR15.gcl$attributes %>% 
+  pull(CAPTURE_DATE) %>%
+  unique()
+
+```
+Create three separate Barling River collections for poolig tests: CMBARL15_early (7/9/15), CMBARL15_middle (8/3/15), and  CMBARL15_late (9/11/15). 
+
+```{r barling collections, echo=FALSE}
+
+dates <- c(early = "2015-07-09", middle =  "2015-08-03", late = "2015-09-11") 
+
+for(i in 1:length(dates)){
+  
+  tmp <- AttributesToIDs.GCL(silly = "CMBARLR15", attribute = "CAPTURE_DATE", matching = dates[i] %>% as.POSIXct())
+  
+  PoolCollections.GCL(collections = "CMBARLR15", loci = loci, IDs = list(CMBARLR15 = tmp), newname = paste0("CMBARLR15_", names(dates[i])))
+  
+}
+
+SampSize(sillyvec = paste0("CMBARLR15_", names(dates)))
+
+```
+
+
+## Drop collections that are out of HWE and create new collections and sillyvec objects
+Dropping some collections before pooling tests:"CM24MI06UW", "CMOLDTOM86", "CMBMI02F"
+
+Manually add in the 3 - 2015 Barling River collections and remove the original, then read the new collections object back into the workspace. Here are the collection after dropping collections out of HWE:
+```{r drop collections-1, echo=FALSE}
+
+collections335 <- collections338 %>% 
+  filter(!Silly_Code%in%c("CM24MI06UW", "CMOLDTOM86", "CMBMI02F"), !is.na(N))# CHDOG92 is in the collections object twice, remove the one without a sample size.
+
+sillyvec335 <- collections335 %>% pull(Silly_Code)
+
+collections335 <- collections335 %>% mutate(Silly_Code = factor(Silly_Code, sillyvec335), N = SampSize(sillyvec = sillyvec335))
+
+write_csv(collections335, "output/collections335.csv")
+
+collections337 <- read_csv("output/collections337.csv") #New collections object with barling 2015 collection separated.
+
+collections337
+
+```
+### Fisher's Tests 1
+Set up list for inital pooling test. I added an field (fishers_test) to the "Prepooling collections" sheet in the summary file that indicates which collections to tests.
+```{r pooling tests 1 setup, message=FALSE}
+
+pre_pooling <- readxl::read_xlsx(path="SPen2WA_Chum_baseline_summary.xlsx", sheet="Prepooling collections", skip = 1)
+
+
+FishersTest1_collections <- pre_pooling %>% 
+  filter(!is.na(fishers_test)) %>% 
+  select(Silly_Code,fishers_test)
+
+FishersTest1 <- lapply(unique(FishersTest1_collections$fishers_test),function(test){
+  
+  FishersTest1_collections %>% 
+    filter(fishers_test==test) %>% 
+    pull(Silly_Code)
+  
+})
+
+FishersTest1_collections
+
+```
+Run fisher's tests. Eight of the 82 tests were significant (alpha = 0.01) indicating that allele frequencies are different.I'm keeping these collections separate for now because I don't have collection dates or reliable lat/lons for some of these collection.  I want to see where they fall on the tree. If there were more than two collections in the tests, I'll test each pair in the next round of fisher's tests.  
+
+```{r run tests1, message=FALSE}
+
+Test <- FishersTest1
+
+sillyvec <-unlist(Test)
+
+Freq <- FreqPop.GCL(sillyvec,loci = loci)
+
+Tests1_results <- FishersTest.GCL(freq = Freq, loci = loci, test = Test)
+
+Test1_overall <- Tests1_results$OverallResults %>% 
+  as_tibble(rownames = "Test") %>% 
+  mutate(test_no = seq(82))
+
+Test1_overall %>% 
+ write_csv(path = "output/Fishers_Test1_overall.csv")
+
+Test1_overall%>% 
+  filter(overall<0.01)
+
+```
+
+### Pooling round 1
+Pool the collections in the 82 tests that were not significant. 
+```{r pooling round 1, echo=FALSE}
+
+Pooling_1 <- FishersTest1[-c(5,8,16,21, 25, 29,32,74)]
+
+tmp <- sapply(seq(length(Pooling_1)), function(i){
+  
+  PoolCollections.GCL(collections = Pooling_1[[i]], loci = loci)
+  
+})
+
+```
+
+#### Run HWE tests after pooling
+
+Here are the 250 populations that remain after pooling.
+
+```{r Pool_1_HWE, echo=FALSE}
+
+Pooling_1_pops <- readxl::read_xlsx(path="SPen2WA_Chum_baseline_summary.xlsx", sheet="Pooling_1_pops", skip = 1)
+
+sillyvec250 <- Pooling_1_pops$Silly_Code
+
+#gcl2Genepop.GCL(sillyvec = sillyvec250, loci = HWEloci, path = "GENEPOP/NAKPen2WA_250pops_93loci")#Run HW exact tests and produce pairwise fst matrix for tree in GENEPOP
+
+HWENAKPen2WA_250pops_93loci <- ReadGenepopHWE.GCL(file="GENEPOP/NAKPen2WA_250pops_93loci.P")
+
+HWEout <- as.tibble(t(HWENAKPen2WA_250pops_93loci$SummaryPValues)) %>% 
+  mutate(pop = c(sillyvec250,"Overall Pops")) %>% 
+  select(pop, everything())
+
+write_excel_csv(HWEout,"output/HWENAKPen2WA_250pops_93loci.csv")
+
+Pooling_1_pops
+
+```
+
+There were 8 pops out of HWE with alpha=0.05. After Bonferoni adjustment (0.05/nloci) 3 pops were out of HWE: CMSALM03S.CMSALM04S, CMMILCR94, and CMHAMM01.CMHAM01S.CMHAM03S. Drop the CMSALM04S collection, since it was out of HWE on it's own, CMMILCR94, and the CMHAMM01 collection    
+
+```{r HWE pop}
+
+#Pops out of HWE p<0.05
+HWEout %>% 
+  filter(`Overall Loci`<0.05) %>% 
+  select(pop,`Overall Loci`) %>% 
+  mutate(outHWE = case_when(`Overall Loci`< 0.05/length(HWEloci)~"out"))
+
+```
+No loci are out of HWE at alpha=0.05.
+```{r HWE loci}
+
+#Loci out of HWE p<0.05
+as.tibble(HWENAKPen2WA_250pops_93loci$SummaryPValues) %>% 
+  mutate(locus=c(HWEloci,"Overall Loci")) %>% 
+  select(locus,"Overall Pops") %>% 
+  filter(`Overall Pops`<0.05)
+
+```
+
+Scanning in lower pairwise Fst matrtix produce by genepop: [NAKPen2WA_250pops_93loci.MIG]("GENEOP/NAKPen2WA_252pops_93loci.MIG")
+```{r 250 pop tree, message=FALSE}
+
+x <- scan(file = "GENEPOP/NAKPen2WA_250pops_93loci.MIG", skip = 3, nlines = ((250-1)*250/2), fill = TRUE, what = '') %>% as.numeric()
+
+ndist <- seq(((250-1)*250/2))
+
+x <- x[ndist]
+
+dims <- floor(sqrt(length(x) * 2))+1
+
+m <- matrix(NA, dims, dims)
+
+diag(m) <- 0
+
+m[upper.tri(m, diag = FALSE)] <- x
+
+m[lower.tri(m, diag=FALSE)] <- t(m)[lower.tri(t(m), diag = FALSE)]
+
+treenames250 <- Pooling_1_pops$Location
+
+dimnames(m) <- list(treenames250, treenames250)
+  
+write.table(m, file="output/ppfst.test.txt", sep="\t")#The matrix looks good
+
+Fst250 <- m
+
+```
+
+Check pairwise Fst tree of the pooled collections. Assign Campbell Creek to the Knik Arm region, it looks more like Little Su and Ship than Turnagain Arm pops. Drop 
+
+```{r fig.height=15, fig.width=10}
+require(ape)
+FstTree <- nj(Fst250)
+
+groupvec <- factor(Pooling_1_pops$Region,unique(Pooling_1_pops$Region)) %>% 
+  as.numeric()
+
+grcol <- c("blue", "red", "green", "cyan", "darkcyan", "orange", "magenta")
+
+FstTree$edge.length=pmax(0,FstTree$edge.length) #Get rid of negative branches  
+
+colortree <- treeColor.GCL(tree = FstTree, currentnames=FstTree$tip.label, treenames = FstTree$tip.label,groupvec = groupvec, regioncol = match(grcol,colors()))
+
+plot.phylo(x =colortree$tree,edge.color=colortree$color,edge.width=3,use.edge.length=T,show.tip.label=T,adj=.02,cex=.3,font=1,label.offset=0.001, type = "phylogram")
+
+axis(1)  #Adds scale to bottom of plot
+mtext(text=expression(italic(F)[ST]),side=1,cex=1.5,outer=F,line=3)
+
+#loc <- locator(1)
+
+legend(loc$x, loc$y, legend = unique(Pooling_1_pops$Region), fill = grcol)
+
+
+```
+### Fisher's Tests 2
+Set up list for inital pooling test
+```{r pooling tests 2 setup, message=FALSE}
+
+FishersTest2_collections <- Pooling_1_pops %>% 
+  filter(!is.na(fishers_test)) %>% 
+  select(Silly_Code,fishers_test)
+
+FishersTest2 <- lapply(unique(FishersTest2_collections$fishers_test),function(test){
+  
+  FishersTest2_collections %>% 
+    filter(fishers_test==test) %>% 
+    pull(Silly_Code)
+  
+})
+
+```
+Run fisher's tests. Neither of the tests were significant. 
+
+```{r run tests2, message=FALSE}
+
+Test <- FishersTest2
+
+sillyvec <-unlist(Test)
+
+Freq <- FreqPop.GCL(sillyvec250,loci = loci)
+
+Tests2_results <- FishersTest.GCL(freq = Freq, loci = loci, test = Test)
+
+Test2_overall <- Tests2_results$OverallResults %>% 
+  as_tibble(rownames = "Test") %>% 
+  mutate(test_no = seq(2))
+
+Test2_overall %>% 
+ write_csv(path = "output/Fishers_Test2_overall.csv")
+
+Test2_overall%>% 
+  filter(overall<0.01)
+
+```
+
+### Pooling round 2
+Pool the 1990s collections for Joshua Green and Volcano Bay.  Also pool the Hamma Hamma River collections CMHAM01S and CMHAM03S after removing the other 2001 collection.
+```{r pooling round 2, echo=FALSE}
+
+Pooling_2 <- FishersTest2
+
+tmp <- sapply(seq(length(Pooling_2)), function(i){
+  
+  PoolCollections.GCL(collections = Pooling_2[[i]], loci = loci)
+  
+})
+
+PoolCollections.GCL(collections = c("CMHAM01S", "CMHAM03S"), loci = loci)
+
+```
+Read in new pops DF with the two new pooled collections.  Collections with less 40 samples that don't have another collection from the same location were removed and collections that were out of HWE were also removed.
+```{r Pool_2_HWE, echo=FALSE}
+
+Pooling_2_pops <- readxl::read_xlsx(path="SPen2WA_Chum_baseline_summary.xlsx", sheet="Pooling_2_pops", skip = 1)
+
+sillyvec233 <- Pooling_2_pops$Silly_Code
+
+#gcl2Genepop.GCL(sillyvec = sillyvec233, loci = HWEloci, path = "GENEPOP/NAKPen2WA_233pops_93loci")#Run HW exact tests and produce pairwise fst matrix for tree in GENEPOP
+
+HWENAKPen2WA_233pops_93loci <- ReadGenepopHWE.GCL(file="GENEPOP/NAKPen2WA_233pops_93loci.P")
+
+HWEout <- as.tibble(t(HWENAKPen2WA_233pops_93loci$SummaryPValues)) %>% 
+  mutate(pop = c(sillyvec233,"Overall Pops")) %>% 
+  select(pop, everything())
+
+write_excel_csv(HWEout,"output/HWENAKPen2WA_233pops_93loci.csv")
+
+Pooling_2_pops
+
+```
+
+There were 5 pops were out of HWE with alpha=0.05. After Bonferoni adjustment (0.05/nloci) no pope were out of HWE   
+
+```{r Pool_2_HWE by pop}
+
+#Pops out of HWE p<0.05
+HWEout %>% 
+  filter(`Overall Loci`<0.05) %>% 
+  select(pop,`Overall Loci`) %>% 
+  mutate(outHWE = case_when(`Overall Loci`< 0.05/length(HWEloci)~"out"))
+
+
+```
+No loci are out of HWE at alpha=0.05.
+```{r Pool_2_HWE by loci}
+
+#Loci out of HWE p<0.05
+as.tibble(HWENAKPen2WA_233pops_93loci$SummaryPValues) %>% 
+  mutate(locus=c(HWEloci,"Overall Loci")) %>% 
+  select(locus,"Overall Pops") %>% 
+  filter(`Overall Pops`<0.05)
+
+```
+
+Scanning in lower pairwise Fst matrtix produce by genepop: [NAKPen2WA_233pops_93loci.MIG]("GENEOP/NAKPen2WA_233pops_93loci.MIG")
+```{r 233 pop tree, message=FALSE}
+
+n <- 233
+
+x <- scan(file = "GENEPOP/NAKPen2WA_233pops_93loci.MIG", skip = 3, nlines = ((n-1)*n/2), fill = TRUE, what = '') %>% as.numeric()
+
+ndist <- seq(((n-1)*n/2))
+
+x <- x[ndist]
+
+dims <- floor(sqrt(length(x) * 2))+1
+
+m <- matrix(NA, dims, dims)
+
+diag(m) <- 0
+
+m[upper.tri(m, diag = FALSE)] <- x
+
+m[lower.tri(m, diag=FALSE)] <- t(m)[lower.tri(t(m), diag = FALSE)]
+
+treenames233 <- Pooling_2_pops$Location
+
+dimnames(m) <- list(treenames233, treenames233)
+  
+write.table(m, file="output/ppfst.test.txt", sep="\t")#The matrix looks good
+
+Fst233 <- m
+
+```
+
+Something is wrong with the Volcano Bay and Sepovak River collections.  The 2009 Volcano clusters near the 1993 Sepovak River and the 1996/1992 collection clusters with the 2009 Stepovak River.  Is something backwards here?  There also appears to be something going on for other 1990s and 2009 collections from Moller Bay, Joshua Green, Amber Bay (Main Cr), and Hallo Bay (Big R.). Maybe there was a mixup when extracting or collections were misslabeled?
+
+```{r 233pop tree, fig.height=15, fig.width=10, echo=FALSE}
+require(ape)
+FstTree <- nj(Fst233)
+
+groupvec <- factor(Pooling_2_pops$Region,unique(Pooling_2_pops$Region)) %>% 
+  as.numeric()
+
+grcol <- c("blue", "red", "green", "cyan", "darkcyan", "orange", "magenta")
+
+FstTree$edge.length=pmax(0,FstTree$edge.length) #Get rid of negative branches  
+
+colortree <- treeColor.GCL(tree = FstTree, currentnames=FstTree$tip.label, treenames = FstTree$tip.label,groupvec = groupvec, regioncol = match(grcol,colors()))
+
+plot.phylo(x =colortree$tree,edge.color=colortree$color,edge.width=2,use.edge.length=T,show.tip.label=T,adj=c(0,0),cex=.2,font=1,label.offset=0.001, type = "phylogram")
+
+axis(1)  #Adds scale to bottom of plot
+
+mtext(text=expression(italic(F)[ST]),side=1,cex=1.5,outer=F,line=3)
+
+#locator(1)
+
+legend(x = 0.09036771, y = 83.50234 , legend = unique(Pooling_2_pops$Region), fill = grcol)
+
+```
+Here are the overall results of pooling tests for all combinations of North AK Pen collections that can't be pooled with collections from the same location.  None of these collections are poolable.  Since I don't have enough information for these collections to know if they have data issues, I'm just going to keep the 2009 collections and drop the 1990s collections from the baseline. The Petrou et al. (2015) baseline also used the 2009 collections.
+```{r fishers test 3, echo=FALSE}
+
+testsillys <- sillyvec233[c(8,9,27,28,36,37,44,45,55,56)]
+
+Freq <- FreqPop.GCL(sillyvec233,loci = loci)
+
+combinations <- combn(testsillys, 2)## All combinations of test sillys
+
+tests <- lapply(1:ncol(combinations), function(test){
+  
+  
+  combinations[ ,test]
+  
+  
+})
+
+
+Tests3_results <- FishersTest.GCL(freq = Freq, loci = loci, test = tests)
+
+Test3_overall <- Tests3_results$OverallResults %>% 
+  as_tibble(rownames = "Test")
+
+Test3_overall %>% 
+ write_csv(path = "output/Fishers_Test3_overall.csv")
+
+Test3_overall%>% 
+  filter(overall<0.01)
+```
+### Read in final set of populations
+A total of 227 populations remain after pooling collections from the same location and dropping collections that are out of HWE.
+```{r final pops, echo=FALSE}
+
+final_pops <- readxl::read_xlsx(path="SPen2WA_Chum_baseline_summary.xlsx", sheet="Final_pops", skip = 1)
+
+sillyvec227 <- final_pops$Silly_Code
+
+final_pops
+```
+
+## Linkage
+### Dump GENEPOP files
+Dump out multiple genepop files with different ranges of populations so LD will be done faster. Each genepop contains ~10 populations and the 93 nuclear DNA SNPs. 
+```{r LD genepop files, echo=TRUE}
+
+xpop <- seq(from = 1, to = 227, by = 10)
+
+sapply(xpop, function(x){
+  
+  if(x!=221){pops = seq(from = x, to = x+9)}else(pops = seq(from = x, to = 227))
+  
+  
+  gcl2Genepop.GCL(sillyvec = sillyvec227[pops], loci = HWEloci, path = paste0("GENEPOP/LD_files/Pops",pops[1],"to",pops[length(pops)]))
+
+  
+})
+
+
+```
+### Summarize LD output
+Here's the LD output for all populations and locus combinations.
+```{r get LD results, echo=FALSE, message=FALSE}
+
+files <- list.files("Genepop/LD_files", pattern = ".DIS", full.names = TRUE)
+
+LDsummary <- lapply(files, function(file){ReadGenepopDis.GCL(file = file, loci = HWEloci)})#Summaries for all LD genepop files. 
+
+LDsummary_df <- bind_cols(LDsummary)
+
+dropcol <- c(dimnames(LDsummary_df)[[2]][grep(dimnames(LDsummary_df)[[2]], pattern = "Locus")][-c(1:2)],dimnames(LDsummary_df)[[2]][grep(dimnames(LDsummary_df)[[2]], pattern = "Overall")])
+  #put in 1 data frame
+
+LDsummary_df <- LDsummary_df %>% 
+  select(-dropcol) 
+
+LDsummary_df
+
+```
+### Tidy up LD data
+Here I'm putting the LD output in long format to make it easier to summarize.
+```{r LD locus pairs, echo=FALSE}
+
+#Create new dataframe with full locus names. Remove tests including Ots_uwRAD62017-76.
+LD <- LDsummary_df %>% 
+  mutate(Locus_pair = paste0(Locus1, "|", Locus2)) %>% 
+  select(Locus_pair, everything()) %>% 
+  select(-Locus1, -Locus2) %>% 
+  gather(key = "Pop", value = "Pvalue", -Locus_pair) 
+
+write_csv(LD, "output/LDsummary.csv")
+
+LD
+
+```
+### Proportion of pops with p-values less than 0.05 for each locus pair
+Here are the significant tests (p-value < 0.05)
+```{r number of LD pops, echo=FALSE}
+
+npops <- length(LD$Pop %>% unique())
+
+PLD <- LD %>% 
+  filter(Pvalue < 0.05) %>% 
+  group_by(Locus_pair) %>% 
+  summarize(prop_pops_LD = length(Pop)/npops)
+
+PLD
+
+```
+### Histogram of pops with p-values < 0.05
+The counts drop off around 15% of pops, but the scale is too big to see what's going on.  
+```{r histogram of PLD, echo=FALSE}
+
+LDhist <- PLD %>% 
+  ggplot(aes(x = prop_pops_LD))+
+  geom_histogram(binwidth = .01)
+
+plotly::ggplotly(LDhist)
+
+```
+### Histogram of pops with p-values<0.05 for proportion of pops > 50%. 
+Locus sets are considered linked if they the LD test p-values are less than 0.05 in over 50% of populations
+3 pairs of loci are significantly linked in over 50% of pops
+```{r histogram of PLD > 50%}
+
+plotly::ggplotly(PLD %>% 
+  filter(prop_pops_LD > .5) %>% 
+  ggplot(aes(x = prop_pops_LD))+
+  geom_histogram(binwidth = .01))
+
+```
+### Linked loci
+Using 50% of pops cuttoff for considering loci linked.  6 loci (3 sets) are significantly linked with other loci. These are the same loci found linked in 
+```{r loci linked 50% pops}
+
+LDloci0 <- PLD %>% 
+  filter(prop_pops_LD>.5) %>% 
+  separate(Locus_pair,sep="\\|",remove=TRUE, into=c("Locus1","Locus2")) %>% 
+  arrange(prop_pops_LD)
+  
+LDloci <- c(LDloci0$Locus1,LDloci0$Locus2) %>% unique() %>% sort()
+
+LDloci
+```
+```{r locus pairs nalleles}
+
+LDloci0 %>% 
+  mutate(Locus1_alleles = LocusControl$nalleles[Locus1], Locus2_alleles = LocusControl$nalleles[Locus2])
+
+```
+### Locus stats for linked loci
+Calculate locus statistics *F*[ST] and Ho to help decide which markers to drop from each locus set/group. These stats will be used to determine which locus to drop from each linked set.
+```{r LD locus stats, fig.height=20, fig.width=20, message=FALSE, echo=FALSE}
+#Calculate heterozygosities for all markers to exclude marker pairs that are mostly fixed
+#LocusStats<-HoFisFstTable.GCL(sillyvec=sillyvec227,loci=HWEloci,dir="FSTAT")
+
+LocusStats_df <- LocusStats %>% 
+  as_tibble(rownames = "Locus") %>% 
+  filter(!Locus=="Overall")
+
+LDPairsStats <- LDloci0 %>% 
+  left_join(LocusStats_df, by = c("Locus1" = "Locus")) %>% 
+  mutate(Ho_1 = Ho, Fst_1 = Fst) %>% 
+  left_join(LocusStats_df, by=c("Locus2" = "Locus")) %>% 
+  mutate(Ho_2 = Ho.y, Fst_2 = Fst.y) %>% 
+  mutate(Locus1_alleles = LocusControl$nalleles[Locus1], Locus2_alleles = LocusControl$nalleles[Locus2]) %>% 
+  select(Locus1, Fst_1, Ho_1,Locus2, Fst_2, Ho_2, Locus1_alleles, Locus2_alleles) %>% 
+  mutate(Set = paste0(Locus1,"|",Locus2), Locus1 = factor(Locus1, levels = unique(Locus1)), Locus2 = factor(Locus2, levels = unique(Locus2))) 
+
+LDPairsStats
+write_csv(LDPairsStats, "Linked_Locus_pair_stats.csv")
+
+```
+### LD loci to drop
+The locus with the lowest Fst from each linked set will be dropped. If they have Fst's that are equal then drop the first locus. There are 3 loci to drop for LD.
+```{r drop LD loci, echo=FALSE}
+
+drop_loci <- LDPairsStats %>% 
+  mutate(Locus1 = Locus1 %>% as.character(), Locus2 = Locus2 %>% as.character()) %>% 
+  mutate(drop_loci = case_when(Fst_1 < Fst_2 ~Locus1, Fst_1 > Fst_2 ~Locus2, Fst_1 == Fst_2 ~Locus1)) %>% 
+  pull(drop_loci) %>% 
+  unique()
+
+drop_loci
+
+```
+### Combining mtDNA loci
+There are three loci that are mitochondrial:  lists these
+Becasue these loci are mitochondrial they are linked.  Here I'm collapsing them down into a single locus, so I can keep all three in the baseline. This is how it was done for the Petro et al. and Small et al. baselines. Check this.
+```{r combine mtDNA loci, echo=FALSE}
+
+mtDNA_loci <- LocusControl$locusnames[LocusControl$ploidy==1][1:3]
+
+CombineLoci.GCL(sillyvec = sillyvec227, markerset = mtDNA_loci, update = FALSE, delim = c(".", 
+    "_")[1])
+
+
+CombineLoci.GCL(sillyvec = c("CMBARLR15_early","CMBARLR15_late"), markerset = mtDNA_loci, update = FALSE, delim = c(".", 
+    "_")[1])
+
+CMBARLR15_early.gcl <- CMBARLR15_early.temp.gcl
+
+CMBARLR15_late.gcl <- CMBARLR15_late.temp.gcl
+```
+
+### Final loucs set
+Here is the final set of loci after combining the mtDNA loci and dropping LD loci.
+```{r final locus set, echo=FALSE}
+
+loci91 <- LocusControl$locusnames[-match(c(drop_loci,mtDNA_loci),LocusControl$locusnames)] #Final locus set
+loci91
+
+```
+## Map and trees of final data set
+### Map of final pops
+
+```{r final pops map, echo=FALSE, fig.height=8, fig.width=8, message=FALSE, warning=FALSE}
+
+require(leaflet)
+require(mapview)
+require(plotly)
+require(rgdal)
+
+base_coords <- final_pops %>% 
+  ungroup() %>% 
+  mutate(Groups = factor(Groups2, levels = unique(Groups2))) %>% 
+  mutate(Color = case_when(Groups2=="AK Peninsula, North"~"blue",
+                           Groups2=="AK Peninsula, South"~"red",
+                           Groups2=="Kodiak/Afognak islands"~"orange",
+                           Groups2=="Cook Inlet"~"forestgreen",
+                           Groups2=="Prince William Sound"~"magenta",
+                           Groups2=="Yakutat"~"green",
+                           Groups2=="N. SEAK"~"orangered1",
+                           Groups2=="Central SEAK, east"~"cyan",
+                           Groups2=="West Baranof/POW islands"~"gold2",
+                           Groups2=="S. SEAK mainland"~"royalblue",
+                           Groups2=="Queen Charlotte Islands"~"gray",
+                           Groups2=="Central B.C."~"yellow",
+                           Groups2=="SJF/SG/JS"~"plum4",
+                           Groups2=="Vancouver Island, west"~"palegreen2",
+                           Groups2=="Fraser River"~"deeppink",
+                           Groups2=="Puget Sound"~"brown",
+                           Groups2=="Hood Canal"~"cadetblue3",
+                           Groups2=="Coastal WA/Columbia River"~"purple"))%>% 
+  mutate(Map_Color=gplots::col2hex(Color))
+
+map <- base_coords %>% 
+  leaflet() %>%
+  setView(lng = -144, lat = 54, zoom = 4) %>% 
+  addProviderTiles(providers$Esri.WorldTopoMap ) %>% #Esri.WorldShadedRelief
+  addCircleMarkers(lng=~Longitude,lat=~Latitude, color = ~Map_Color, popup = ~treenames, fillOpacity = 100, radius = 1.25, label = ~Order ) %>% 
+  #addPolylines(data=awc,weight = 3,color = hydro_col) %>% 
+  #addPolylines(data=hydro_I_rivers,weight = 3,color = hydro_col) %>% 
+  addScaleBar(position = "bottomleft",options = scaleBarOptions(imperial = FALSE)) %>% 
+  #addMiniMap( position = "bottomright") %>% 
+  addLegend("topright", color = unique(base_coords$Map_Color), values = NULL,
+    title = "Group",
+    labels = unique(base_coords$Groups2),
+    labFormat = labelFormat(),
+    opacity = 1
+  )
+
+htmlwidgets::saveWidget(map, file = "Chum baseline populations map.html")
+
+map
+  
+```
+
+### Boostrap Fst Tree
+```{r pairwise fst, eval=FALSE, message=FALSE}
+
+#BS_Fst <- PairwiseFstTree.GCL(sillyvec = sillyvec227,loci = loci91, dir = "FSTAT")
+#dput(BS_Fst,"output/BS_Fst.txt")
+
+BS_Fst <- dget("output/BS_Fst.txt")
+
+```
+
+This is the pairwise Fst tree of the final pooled collections. 
+```{r make unrooted tree using regions, fig.height=15, fig.width=10}
+
+FstTree <- BS_Fst$tree
+
+groupvec <- factor(base_coords$Groups,unique(base_coords$Groups2)) %>% 
+  as.numeric()
+
+treenames227 <- paste0(base_coords$treenames, " (", final_pops$Order, ")")
+
+grcol <- base_coords$Color %>%
+  unique()
+
+FstTree$edge.length=pmax(0,FstTree$edge.length) #Get rid of negative branches  
+
+colortree <- treeColor.GCL(tree=FstTree,currentnames=sillyvec227,treenames = treenames227, groupvec = groupvec, regioncol = match(grcol, colors()))
+
+jpeg(filename = "output/BoostrapFstTree.jpg", width = 10, height = 13, family = "serif", units = "in", res = 600, type = "windows")
+
+ape::plot.phylo(x = colortree$tree, edge.color = colortree$color, edge.width = 3, use.edge.length = T, show.tip.label = T, adj = .02, cex = .4, font = 1, label.offset = 0.001)
+
+axis(1)  #Adds scale to bottom of plot
+mtext(text = expression(italic(F)[ST]), side = 1, cex = 1.5, outer = F, line = 3)
+
+#loc2 <- locator(1)
+
+legend(x=loc2$x, y=loc2$y, legend = unique(final_pops$Groups), fill = grcol, cex = .7)
+
+dev.off()
+
+```
+Rooted Tree all pops
+```{r rooted tree with consensus nodes, fig.height = 13, fig.width = 10}
+
+BS_Fst$bootstrap[is.na(BS_Fst$bootstrap)] <-0
+
+node_labs <- sapply(seq(length(BS_Fst$bootstrap)),function(i){
+  
+  b <- BS_Fst$bootstrap[i]
+  
+  if(b>=500){l ="*"} else{l = ""}
+  
+  l
+  
+})
+
+jpeg(filename = "Output/BoostrapFstTree_with_nodelabs.jpg",width=10,height=13,family="serif",units="in",res=600,type="windows")
+
+ape::plot.phylo(x = colortree$tree, edge.color = colortree$color, edge.width = 3, use.edge.length = T, show.tip.label = T, adj = .02, cex = .4, font = 1, label.offset = 0.001)
+
+node_labs[1] <- ""
+
+ape::nodelabels(node_labs, frame="none", adj = c(1.07,.38), col = "black", cex = 1) 
+
+axis(1)  #Adds scale to bottom of plot
+mtext(text = expression(italic(F)[ST]), side = 1, cex = 1.5, outer = F, line = 3)
+
+
+legend(x=loc$x,y=loc$y,unique(base_coords$Groups2),fill=grcol,text.font = 1, cex = .7)
+
+dev.off()
+
+```
+Read in new SEAK groupings that Andy Piston suggested.
+```{r Piston groups, echo=FALSE}
+
+final_pops <- readxl::read_xlsx(path="SPen2WA_Chum_baseline_summary.xlsx", sheet="Final_pops", skip = 1)
+
+groups3 <- final_pops$Groups3 %>% unique()
+groupvec3 <- final_pops$Groups3 %>% factor() %>% as.numeric()
+treenames3 <- paste0(final_pops$treenames, " (", final_pops$Order, ")")
+
+
+```
+Rooted Tree Southeast AK pops only.
+
+```{r rooted tree with consensus nodes, fig.height = 13, fig.width = 10}
+
+
+SEFstTree <- BS_Fst$PairwiseFst[sillyvec227[104:167], sillyvec227[104:167]] %>% ape::nj()
+
+SEgroupvec <- final_pops$Groups3[104:167] %>% factor(levels = unique(final_pops$Groups3[104:167])) %>% as.numeric() 
+
+SEtreenames <- treenames3[104:167]
+
+SEgrcol <- c(`1`="orangered1", `2`="cyan",`3`="gold2", `4`="green",`5`="royalblue") 
+
+SEFstTree$edge.length=pmax(0,SEFstTree$edge.length) #Get rid of negative branches  
+
+colortree <- treeColor.GCL(tree=SEFstTree, currentnames = sillyvec227[104:167], treenames = SEtreenames, groupvec = SEgroupvec, regioncol = match(SEgrcol, colors()))
+
+jpeg(filename = "output/BoostrapFstTree_SEAKonly_PistonGroups.jpg", width = 10, height = 13, family = "serif", units = "in", res = 600, type = "windows")
+
+ape::plot.phylo(x = colortree$tree, edge.color = colortree$color, edge.width = 3, use.edge.length = T, show.tip.label = T, adj = .02, cex =.8, font = 1, label.offset = 0)
+
+axis(1)  #Adds scale to bottom of plot
+mtext(text = expression(italic(F)[ST]), side = 1, cex = 1.5, outer = F, line = 3)
+
+#loc3 <- locator(1)
+
+legend(x=loc3$x, y=loc3$y, legend = unique(final_pops$Groups3[104:167]), fill = SEgrcol, cex = .7)
+
+dev.off()
+
+```
+This is the tree with all populations and Andy Piston's SEAK groups 
+```{r rooted tree with consensus nodes new SEAK groups, fig.height = 13, fig.width = 10}
+
+randcol <-randomcoloR::distinctColorPalette(k = 19, altCol = FALSE, runTsne = FALSE)
+plot(x=1:19, y=1:19, col = randcol, pch=15)
+
+grcol19 <- c("blue","red","orange","forestgreen","magenta","yellow4","orangered1","cyan","gold2","royalblue","green","gray","yellow","plum4","palegreen2","brown","cadetblue3","purple","deeppink3") 
+
+groupvec3 <- final_pops$Groups3 %>% 
+  factor(levels = unique(final_pops$Groups3)) %>% 
+  as.numeric() 
+
+
+treenames227 <- final_pops$treenames
+
+BS_Fst$bootstrap[is.na(BS_Fst$bootstrap)] <-0
+
+node_labs <- sapply(seq(length(BS_Fst$bootstrap)),function(i){
+  
+  b <- BS_Fst$bootstrap[i]
+  
+  if(b>=500){l ="*"} else{l = ""}
+  
+  l
+  
+})
+
+colortree <- treeColor.GCL(tree=FstTree, currentnames = sillyvec227, treenames = treenames227, groupvec = groupvec3, regioncol = match(grcol19, colors()))
+
+
+jpeg(filename = "Output/BoostrapFstTree_with_nodelabs_v2.jpg",width=10,height=13,family="serif",units="in",res=600,type="windows")
+
+ape::plot.phylo(x = colortree$tree, edge.color = colortree$color, edge.width = 3, use.edge.length = T, show.tip.label = T, adj = .02, cex = .4, font = 1, label.offset = 0.001)
+
+node_labs[1] <- ""
+
+ape::nodelabels(node_labs, frame="none", adj = c(1.07,.38), col = "black", cex = 1) 
+
+axis(1)  #Adds scale to bottom of plot
+mtext(text = expression(italic(F)[ST]), side = 1, cex = 1.5, outer = F, line = 3)
+
+#loc4 <- locator(1)
+
+legend(x=loc$x,y=loc$y,unique(final_pops$Groups3),fill=grcol19,text.font = 1, cex = .7)
+
+dev.off()
+
+```
+Here's a new map with updated SEAK groups
+```{r final pops map, echo=FALSE, fig.height=8, fig.width=8, message=FALSE, warning=FALSE}
+
+require(leaflet)
+require(mapview)
+require(plotly)
+require(rgdal)
+
+base_coords <- final_pops %>% 
+  ungroup() %>% 
+  mutate(Groups = factor(Groups3, levels = unique(Groups3))) %>% 
+  mutate(Color = case_when(Groups3=="AK Peninsula, North"~"blue",
+                           Groups3=="AK Peninsula, South"~"red",
+                           Groups3=="Kodiak/Afognak islands"~"orange",
+                           Groups3=="Cook Inlet"~"forestgreen",
+                           Groups3=="Prince William Sound"~"magenta",
+                           Groups3=="Yakutat"~"yellow4",
+                           Groups3=="NSEAK - FALL"~"orangered1" ,
+                           Groups3=="NSEAK - Summer"~"cyan",
+                           Groups3=="West Baranof"~"gold2",
+                           Groups3=="SSEAK - Summer"~"royalblue",
+                           Groups3=="POW - Fall"~"green",
+                           Groups3=="Queen Charlotte Islands"~"gray",
+                           Groups3=="Central B.C."~"yellow",
+                           Groups3=="SJF/SG/JS"~"plum4",
+                           Groups3=="Vancouver Island, west"~"palegreen2",
+                           Groups3=="Fraser River"~"brown",
+                           Groups3=="Puget Sound"~"cadetblue3",
+                           Groups3=="Hood Canal"~"purple",
+                           Groups3=="Coastal WA/Columbia River"~"deeppink3"))%>% 
+  mutate(Map_Color=gplots::col2hex(Color))
+
+map <- base_coords %>% 
+  leaflet() %>%
+  setView(lng = -144, lat = 54, zoom = 4) %>% 
+  addProviderTiles(providers$Esri.WorldTopoMap ) %>% #Esri.WorldShadedRelief
+  addCircleMarkers(lng=~Longitude,lat=~Latitude, color = ~Map_Color, popup = ~treenames, fillOpacity = 100, radius = 2, label = ~Order ) %>% 
+  #addPolylines(data=awc,weight = 3,color = hydro_col) %>% 
+  #addPolylines(data=hydro_I_rivers,weight = 3,color = hydro_col) %>% 
+  addScaleBar(position = "bottomleft",options = scaleBarOptions(imperial = FALSE)) %>% 
+  #addMiniMap( position = "bottomright") %>% 
+  addLegend("topright", color = unique(base_coords$Map_Color), values = NULL,
+    title = "Group",
+    labels = unique(final_pops$Groups3),
+    labFormat = labelFormat(),
+    opacity = 1
+  )
+
+htmlwidgets::saveWidget(map, file = "Chum baseline populations map_v2.html")
+
+map
+  
+```
+
+## Check for unique haplogroups
+The Cook Inlet and Yakutat pops cluster with the North AK Peninsula pops.
+```{r rare haplogroups, echo=FALSE}
+
+Freqs <- FreqPop.GCL(sillyvec = sillyvec227, loci = loci91)
+
+groupvec <- factor(final_pops$Groups3, levels = unique(final_pops$Groups3)) %>% as.numeric()
+
+Freqs_df <- lapply(paste0("Allele ", 1:8), function(allele){
+  
+  Freqs[,"Oke_Cr30.Oke_Cr386.Oke_ND3-69",allele]
+  
+}) %>% 
+  setNames(LocusControl$alleles$`Oke_Cr30.Oke_Cr386.Oke_ND3-69`) %>% 
+  bind_rows(.id = "Silly") %>% 
+  mutate(Silly = sillyvec227, N = SampSize(sillyvec227) %>% as.numeric() , Pop = 1:227,Group = factor(final_pops$Groups3, levels = groups3), Color = grcol19[groupvec], PopName = factor(treenames3, levels = treenames3) ) %>% 
+  gather(-Silly, -N, - Pop, -Group, -Color, -PopName, key = "Allele", value = "Count") %>% 
+  mutate(Frequency = Count/N) 
+
+```
+
+```{r freqency bubbleplot, echo=FALSE, fig.height=8, fig.width=30}
+
+  
+require(ggplot2)
+
+bubble_range <- 15
+
+tmp <- Freqs_df
+tmp$Frequency[tmp$Frequency==0] <- NA
+
+haploplot <- ggplotly(tmp %>%
+  ggplot(aes(y = Allele, x = PopName, size = Frequency, color = Group)) + 
+  geom_point(color = tmp$Color) + 
+  scale_size_continuous(name = "Frequency", limits = c(0, 1), breaks = seq(0,1,.1), range = c(0, bubble_range), labels = as.character(seq(0,1,.1)))+
+  scale_x_discrete(name = "Population", labels = unique(tmp$Pop)) +
+  scale_y_discrete(name = "Allele", labels = LocusControl$alleles[["Oke_Cr30.Oke_Cr386.Oke_ND3-69"]])+
+  theme(axis.text.x = element_text(size = rel(1.2), angle = 90, hjust =.5, vjust = 0.5)) +
+  theme(axis.text.y = element_text(size = rel(1.3))) +
+  theme(axis.title.y = element_text(size = rel(1.7), angle = 90)) +
+  theme(axis.title.x = element_text(size = rel(1.7), angle = 00)) +
+  theme(legend.title = element_text(size = rel(1.7), angle = 00)) +
+  theme(text = element_text(family = "serif")), width = 10000, height = 600)
+
+
+htmlwidgets::saveWidget(haploplot, file = "mtDNA_haplo_frequencies.html")
+
+```
+Plot allele frequencies for diploid loci
+
+```{r FreqFISplots}
+
+FreqFisPlot4SNPs.GCL(sillyvec227, loci = loci91[-91], groupvec = groupvec, file = NULL, groupcol = grcol19 )
+
+```
+
