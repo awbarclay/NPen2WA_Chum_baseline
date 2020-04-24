@@ -17,7 +17,7 @@ This baseline includes genetic data populations of chum salmon from North Alaska
 
 #save.image("V:\\Analysis\\5_Coastwide\\Chum\\SPen2WA_Chum_baseline\\NPen2WA_Chum_baseline.Rdata")
 
-load("V:\\Analysis\\5_Coastwide\\Chum\\SPen2WA_Chum_baseline\\NPen2WA_Chum_baseline_raw.Rdata")
+load("V:\\Analysis\\5_Coastwide\\Chum\\SPen2WA_Chum_baseline\\NPen2WA_Chum_baseline.Rdata")
 
 source("C:\\Users\\awbarclay\\Documents\\R\\GitHubCloneFunctions.R")#GCL functions
 
@@ -35,9 +35,8 @@ library("tidyverse")
 
 ## Data Retrieval
 ### Get collection information
-The is the collection information for all of the Chum salmon baseline collections we have in LOKI.
-Some of the location names and lat/longs have been corrected and collection have been ordered geographically.
-```{r collection information, echo=FALSE}
+The is the collection information for all of the Chum salmon baseline collections we have in LOKI.  I found a lot of collection information that is either missing or incorrect in LOKI that eventually need to be cleaned up. Some of the location names and lat/longs have been corrected and collection have been ordered geographically. 
+```{r collection information, results=TRUE, echo=TRUE}
 
 collection_info <- read_csv("data/NAKPen2WA_ordered_collection_info.csv")
 collection_info
@@ -49,9 +48,9 @@ Creating the "LocusControl" object and retrieving genotypes from LOKI. The Locus
 
 #CreateLocusControl.GCL(markersuite = "ChumGolden2011_96SNPs", username ="awbarclay", password = password)#Locus control
 
-sillyvec578 <- collection_info$Silly_Code
+sillyvec577 <- collection_info$Silly_Code
 
-#LOKI2R.GCL(sillyvec=c("CHJOS92UW","CMZAC09"),username="awbarclay",password)#Pull Data from LOKI
+#LOKI2R.GCL(sillyvec=sillyvec578,username="awbarclay",password)#Pull Data from LOKI
 
 loci <- LocusControl$locusnames %>% 
   sort() # Initial loci object. This will be used by many fuctions.  
@@ -60,11 +59,16 @@ loci <- LocusControl$locusnames %>%
 
 ```
 There are two collections from 1992 that begin with a number.  Using PoolCollections function to change the name of the sillys becuase R doesn't like objects that begin with a number.
-```{r new silly name, echo=T}
+```{r new silly name, echo=TRUE, message=FALSE}
 
 PoolCollections.GCL(collections = "5P92EKEE", loci = loci, newname = "CMKETA92")
 
 PoolCollections.GCL(collections = "5P92HWHN", loci = loci, newname = "CMWHN92")
+
+rm(`5P92EKEE.gcl`)
+
+rm(`5P92HWHN.gcl`)
+
 
 ```
 
@@ -72,26 +76,26 @@ PoolCollections.GCL(collections = "5P92HWHN", loci = loci, newname = "CMWHN92")
 There are 383 chum collections that have data for some of the 96 SNPs in the WASSIP panel.
 ```{r sillyvec, echo=FALSE}
 
-tmp <- gsub(x = ls(pattern = ".gcl") [-c(1,2,385)], pattern = ".gcl", replacement = "")
+tmp <- gsub(x = ls(pattern = ".gcl") [-385], pattern = ".gcl", replacement = "")
 
 
-collections383 <-  collection_info %>% 
+collections382 <-  collection_info %>% 
   mutate(Silly_Code = gsub(x= Silly_Code, pattern = "5P92EKEE", replacement = "CMKETA92"))%>% 
   mutate(Silly_Code = gsub(x= Silly_Code, pattern = "5P92HWHN", replacement = "CMWHN92")) %>% 
   filter(Silly_Code%in%tmp) %>% 
   arrange(Order) %>% 
   mutate(Silly_Code = factor(Silly_Code, level = unique(Silly_Code)))
 
-write_csv(collections383, "output/collections383.csv")
+write_csv(collections382, "output/collections382.csv")
 
-collections383
+collections382
 
 ```
 ### Check for genotype holes
 There some collections with a lot of missing data. Here I'm using the SampleSizeByLocus.GCL function get the number of samples with  data at each locus.
 ```{r genotype holes}
 
-samp_size_by_loc <- SampSizeByLocus.GCL(sillyvec = collections383$Silly_Code, loci = loci) %>% 
+samp_size_by_loc <- SampSizeByLocus.GCL(sillyvec = collections382$Silly_Code, loci = loci) %>% 
   as_tibble(rownames = "silly")
 
 write_csv(samp_size_by_loc, "output/sample_size_by_locus.csv")
@@ -99,18 +103,20 @@ write_csv(samp_size_by_loc, "output/sample_size_by_locus.csv")
 samp_size_by_loc
 
 ```
-The dark cell in the heatmap are where collections are missing data at some loci.
-```{r heatmap of sample sizes by locus, echo=FALSE}
+The dark cells in the heatmap are where collections are missing data at some loci.
+```{r heatmap of sample sizes by locus, echo=FALSE, fig.height=20, fig.width=11}
 
-samp_size_by_loc %>% 
+p <- samp_size_by_loc %>% 
   gather(-silly, key = "locus", value = "n") %>% 
   mutate(data = case_when(n>0~1, 
                           TRUE~n)) %>% 
   ggplot(aes(y = locus, x = silly, fill = data)) + 
   geom_tile()
 
+plotly::ggplotly(p)
+
 ```
-Here I'm creating a new sillyvec and collections objects that only contain the sillys for collection that have all 96 of the WASSIP loci. 
+Here I'm creating a new sillyvec and collection objects that only contain the sillys for collection that have all 96 of the WASSIP loci. 
 ```{r drop collections}
 
 sillyvec338 <- samp_size_by_loc %>% 
@@ -122,7 +128,7 @@ sillyvec338 <- samp_size_by_loc %>%
   pull(silly) %>% 
   as.character()
 
-collections338 <- collections383 %>% 
+collections338 <- collections382 %>% 
   filter(Silly_Code%in%sillyvec338)
 
 write_csv(collections338, "output/collections338.csv")## Writing out to put in summary excel
@@ -139,7 +145,7 @@ require(mapview)
 require(plotly)
 require(rgdal)
 
-base_coords <- collections383 %>% 
+base_coords <- collections382 %>% 
   mutate(Quadrant=factor(Region, levels = unique(Region)),
          Color = case_when(Region=="Westward"~"blue",
                            Region=="Southcentral Alaska"~"red",
@@ -168,7 +174,7 @@ base_coords %>%
   
 ```
 ### Dump original data before quality control
-Here I'm dumping out the data - as a dataframe - for the 338 collections that have data at all 96 SNPs so failure rates can be calcuated on the final baseline pops after quality control measures have been take.
+Here I'm dumping out the data - as a dataframe - for the 339 collections that have data at all 96 SNPs so failure rates can be calcuated on the final baseline pops after quality control measures have been taken.
 ```{r initial scores tibble, echo=FALSE}
 
 #RemoveNAindv.GCL(sillyvec = sillyvec338) #Not needed for this baseline. This removes individuals that were not genotyped for the SNPs in LocusControl 
@@ -222,6 +228,7 @@ samples[,c("collection","original","missloci")]
 
 
 ```
+#### Duplicate check
 Check for individuals within collections that have the same genotypes (duplicate individuals). These are the pairs of fish that had the same genotype at >99% of loci
 ```{r duplicate check, echo = FALSE, include = TRUE, message = FALSE, warning=FALSE}
 
@@ -243,7 +250,7 @@ One fish of each duplicate set was removed from the workspace. Here are fish IDs
 
 removedDups <- RemoveDups.GCL(dupcheckNULLquantile)
 unlist(removedDups[!removedDups == "Nothing Removed"]) %>% 
-  as_tibble(rownames = "silly") #Gets the individuals removed from workspace
+  enframe(name = "silly") #Gets the individuals removed from workspace
 
 ```
 Sample sizes after removing duplicate and non baseline individuals.  I will add these sample sizes to the [Summary Workbook](SPen2WA_Chum_baseline_summary.xlsx). 
@@ -267,11 +274,11 @@ Invariant_loci <- tibble(Locus=loci,Prop=Allele_Prop)%>%
   filter(Prop<0.01|Prop>0.99)
 
 ```
-## Pooling
+## Initial Hardy-Weinberg equillibrium tests
 Running Hardy-Weinberg equillibrium (HWE) tests on collections and loci in GENEPOP prior to pooling. This way, the collections out of HWE can be excluded from further analysis. Usually when a collection is out of HWE it causes the pooled collection to be out of HWE. Collections and loci are considered out of HWE if the overall p-value across loci/pops is less than than alpha after adjusting for multiple tests (i.e., adjusted alpha = 0.05/nloci or 0.05/npops)
 
 There were 4 collections out of HWE: CM24MI06UW, CMOLDTOM86, CMNANA06, and CMBMI02F. The Nanaimo River collection (CMNAN06) has 245 samples, so it's on multiple extraction plates.  Check the individual extraction plates for HWE to see if this population can be kept after dropping out of HWE extractions.
-```{r Hardy-Weinberg check 1}
+```{r Hardy-Weinberg check 1, message=FALSE, warning=FALSE, echo=FALSE}
 
 HWEloci <- loci[LocusControl$ploidy==2]##Not including the three mitochondrial DNA markers because they will not be in HWE and could cause the overall pvalues by collection to be significant.
 
@@ -292,6 +299,7 @@ HWEout%>%
 
 ### Creating new "*.gcl" objects for each CMNAN06 extraction plate 
 
+#### Get plate IDs
 The plate IDs are: 6366, 6367, and 6368
 ```{r CMNANA06 plate IDS, echo=TRUE}
 
@@ -302,6 +310,7 @@ Nanaimo_IDs <- CMNANA06.gcl$attributes %>%
 Nanaimo_IDs
 
 ```
+#### Create objects for each plate ID
 Using PoolCollections.GCL to create individual objects to test for HWE. There are three plates with 71, 91, and 77 samples, respectively.
 ```{r Nanimo plate objects}
 
@@ -315,11 +324,12 @@ for(ID in Nanaimo_IDs){
 
 Nanaimo_Sillys <- paste0("Nanaimo_", Nanaimo_IDs)
 
-SampSize(sillyvec = Nanaimo_Sillys)
+SampSize(sillyvec = Nanaimo_Sillys) %>% setNames(Nanaimo_Sillys)
 
 ```
+#### Check HWE for the plate ID objects
 After adjusting for multiple tests, plates 6366 and 6367 are out of HWE.  Drop these plates and use plate 6368 to represent the pop.
-```{r HWE in genepop for Nanaimo plates}
+```{r HWE in genepop for Nanaimo plates, echo=FALSE, message=FALSE, warning=FALSE}
 
 gcl2Genepop.GCL(sillyvec = Nanaimo_Sillys, loci = HWEloci, path = "GENEPOP/NanaimoPlates_93loci")
 
@@ -335,6 +345,7 @@ HWEout%>%
   filter(`Overall Loci`<= 0.05/3)
 
 ```
+#### Overwrite the old Nanimo object
 Here I'm saving the original Nanaimo River object with a new name and then overwritting the original object with the plate 6386 object.
 ```{r new Nanaimo object}
 
@@ -346,13 +357,14 @@ CMNANA06.gcl <- Nanaimo_6368.gcl
 ### Barling River 2015 collection
 The 2015 Barling River collection was sampled on three different dates throughout the run:"2015-07-09" "2015-08-03" "2015-09-11"
 This was done to check if there are early and late populations in Barling River. 
-```{r Barling dates}
+```{r Barling dates, echo=FALSE}
 
 CMBARLR15.gcl$attributes %>% 
   pull(CAPTURE_DATE) %>%
   unique()
 
 ```
+#### Create new Barling River collections by date sampled
 Create three separate Barling River collections for poolig tests: CMBARL15_early (7/9/15), CMBARL15_middle (8/3/15), and  CMBARL15_late (9/11/15). 
 
 ```{r barling collections, echo=FALSE}
@@ -367,7 +379,8 @@ for(i in 1:length(dates)){
   
 }
 
-SampSize(sillyvec = paste0("CMBARLR15_", names(dates)))
+SampSize(sillyvec = paste0("CMBARLR15_", names(dates))) %>% 
+  setNames(names(dates))
 
 ```
 
@@ -376,7 +389,7 @@ SampSize(sillyvec = paste0("CMBARLR15_", names(dates)))
 Dropping some collections before pooling tests:"CM24MI06UW", "CMOLDTOM86", "CMBMI02F"
 
 Manually add in the 3 - 2015 Barling River collections and remove the original, then read the new collections object back into the workspace. Here are the collection after dropping collections out of HWE:
-```{r drop collections-1, echo=FALSE}
+```{r drop collections-1, echo=FALSE, message=FALSE}
 
 collections335 <- collections338 %>% 
   filter(!Silly_Code%in%c("CM24MI06UW", "CMOLDTOM86", "CMBMI02F"), !is.na(N))# CHDOG92 is in the collections object twice, remove the one without a sample size.
@@ -392,11 +405,12 @@ collections337 <- read_csv("output/collections337.csv") #New collections object 
 collections337
 
 ```
+## Pooling
 ### Fisher's Tests 1
 Set up list for inital pooling test. I added an field (fishers_test) to the "Prepooling collections" sheet in the summary file that indicates which collections to tests.
 ```{r pooling tests 1 setup, message=FALSE}
 
-pre_pooling <- readxl::read_xlsx(path="SPen2WA_Chum_baseline_summary.xlsx", sheet="Prepooling collections", skip = 1)
+pre_pooling <- readxl::read_xlsx(path="SPen2WA_Chum_baseline_summary.xlsx", sheet="Prepooling collections", skip = 1)[,-10]
 
 
 FishersTest1_collections <- pre_pooling %>% 
@@ -416,7 +430,7 @@ FishersTest1_collections
 ```
 Run fisher's tests. Eight of the 82 tests were significant (alpha = 0.01) indicating that allele frequencies are different.I'm keeping these collections separate for now because I don't have collection dates or reliable lat/lons for some of these collection.  I want to see where they fall on the tree. If there were more than two collections in the tests, I'll test each pair in the next round of fisher's tests.  
 
-```{r run tests1, message=FALSE}
+```{r run tests1, message=FALSE, echo=FALSE}
 
 Test <- FishersTest1
 
@@ -452,7 +466,7 @@ tmp <- sapply(seq(length(Pooling_1)), function(i){
 
 ```
 
-#### Run HWE tests after pooling
+
 
 Here are the 250 populations that remain after pooling.
 
@@ -475,10 +489,11 @@ write_excel_csv(HWEout,"output/HWENAKPen2WA_250pops_93loci.csv")
 Pooling_1_pops
 
 ```
+### Run HWE tests after pooling
 
-There were 8 pops out of HWE with alpha=0.05. After Bonferoni adjustment (0.05/nloci) 3 pops were out of HWE: CMSALM03S.CMSALM04S, CMMILCR94, and CMHAMM01.CMHAM01S.CMHAM03S. Drop the CMSALM04S collection, since it was out of HWE on it's own, CMMILCR94, and the CMHAMM01 collection    
+There were 8 pops out of HWE with alpha=0.05. After Bonferoni adjustment (0.05/nloci) 3 pops were out of HWE: CMSALM03S.CMSALM04S, CMMILCR94, and CMHAMM01.CMHAM01S.CMHAM03S. Drop  CMSALM04S, since it was out of HWE on it's own, CMMILCR94, and CMHAMM01 collections    
 
-```{r HWE pop}
+```{r HWE pop, echo=FALSE}
 
 #Pops out of HWE p<0.05
 HWEout %>% 
@@ -488,7 +503,7 @@ HWEout %>%
 
 ```
 No loci are out of HWE at alpha=0.05.
-```{r HWE loci}
+```{r HWE loci, echo=FALSE}
 
 #Loci out of HWE p<0.05
 as.tibble(HWENAKPen2WA_250pops_93loci$SummaryPValues) %>% 
@@ -497,39 +512,62 @@ as.tibble(HWENAKPen2WA_250pops_93loci$SummaryPValues) %>%
   filter(`Overall Pops`<0.05)
 
 ```
+### Check initial tree for diploid loci
+#### Create function for reading in GENEPOP pairwise FST
+This function reads in the pairwise FST half matrix from a GENEPOP "*.mig" file and produces a matrix with dimnames
+```{r GENEPOP pairwise FST function, echo=TRUE}
 
-Scanning in lower pairwise Fst matrtix produce by genepop: [NAKPen2WA_250pops_93loci.MIG]("GENEOP/NAKPen2WA_252pops_93loci.MIG")
-```{r 250 pop tree, message=FALSE}
-
-x <- scan(file = "GENEPOP/NAKPen2WA_250pops_93loci.MIG", skip = 3, nlines = ((250-1)*250/2), fill = TRUE, what = '') %>% as.numeric()
-
-ndist <- seq(((250-1)*250/2))
-
-x <- x[ndist]
-
-dims <- floor(sqrt(length(x) * 2))+1
-
-m <- matrix(NA, dims, dims)
-
-diag(m) <- 0
-
-m[upper.tri(m, diag = FALSE)] <- x
-
-m[lower.tri(m, diag=FALSE)] <- t(m)[lower.tri(t(m), diag = FALSE)]
-
-treenames250 <- Pooling_1_pops$Location
-
-dimnames(m) <- list(treenames250, treenames250)
+read_GENEPOP_pwFST.GCL <- function(file, popnames, outfile = NULL){
   
-write.table(m, file="output/ppfst.test.txt", sep="\t")#The matrix looks good
+  npops <- length(popnames)
+  
+  f <- scan(file = file, skip = 3, nlines = ((npops-1)*npops/2), fill = TRUE, what = '') %>% 
+    as.numeric()
+  
+  ndist <- seq(((npops-1)*npops/2))
+  
+  f <- f[ndist]
+  
+  dims <- floor(sqrt(length(f) * 2))+1
+  
+  m <- matrix(NA, dims, dims)
+  
+  diag(m) <- 0
+  
+  m[upper.tri(m, diag = FALSE)] <- f
+  
+  m[lower.tri(m, diag = FALSE)] <- t(m)[lower.tri(t(m), diag = FALSE)]
 
-Fst250 <- m
+  dimnames(m) <- list(popnames, popnames)
+  
+  if(!is.null(outfile)){
+    
+     write.table(m, file = outfile, sep="\t")
+    
+  } 
+  
+  m
+  
+}
 
 ```
 
-Check pairwise Fst tree of the pooled collections. Assign Campbell Creek to the Knik Arm region, it looks more like Little Su and Ship than Turnagain Arm pops. Drop 
+#### Scan in GENEPOP pairwise FST
+Scanning in lower pairwise Fst matrix produce by genepop: [NAKPen2WA_250pops_93loci.MIG]("GENEOP/NAKPen2WA_252pops_93loci.MIG")
+```{r read in 250 pop mig, message=FALSE, echo=TRUE, eval=FALSE}
 
-```{r fig.height=15, fig.width=10}
+treenames250 <- Pooling_1_pops$Location
+
+Fst250 <- read_GENEPOP_pwFST.GCL(file = "GENEPOP/NAKPen2WA_250pops_93loci.MIG", popnames = treenames250, outfile = "output/pw_FST250.txt")
+
+```
+
+
+#### Plot tree
+Check pairwise Fst tree of the pooled collections.  
+
+```{r 250 pop tree, fig.height=15, fig.width=10}
+
 require(ape)
 FstTree <- nj(Fst250)
 
@@ -551,9 +589,8 @@ mtext(text=expression(italic(F)[ST]),side=1,cex=1.5,outer=F,line=3)
 
 legend(loc$x, loc$y, legend = unique(Pooling_1_pops$Region), fill = grcol)
 
-
 ```
-### Fisher's Tests 2
+## Fisher's Tests 2
 Set up list for inital pooling test
 ```{r pooling tests 2 setup, message=FALSE}
 
@@ -988,7 +1025,7 @@ BS_Fst <- dget("output/BS_Fst.txt")
 ```
 
 This is the pairwise Fst tree of the final pooled collections. 
-```{r make unrooted tree using regions, fig.height=15, fig.width=10}
+```{r rooted tree no node labels, fig.height=15, fig.width=10}
 
 FstTree <- BS_Fst$tree
 
@@ -1063,7 +1100,7 @@ treenames3 <- paste0(final_pops$treenames, " (", final_pops$Order, ")")
 ```
 Rooted Tree Southeast AK pops only.
 
-```{r rooted tree with consensus nodes, fig.height = 13, fig.width = 10}
+```{r SEAK rooted tree with consensus nodes, fig.height = 13, fig.width = 10}
 
 
 SEFstTree <- BS_Fst$PairwiseFst[sillyvec227[104:167], sillyvec227[104:167]] %>% ape::nj()
@@ -1141,7 +1178,7 @@ dev.off()
 
 ```
 Here's a new map with updated SEAK groups
-```{r final pops map, echo=FALSE, fig.height=8, fig.width=8, message=FALSE, warning=FALSE}
+```{r final pops map with Piston Groups, echo=FALSE, fig.height=8, fig.width=8, message=FALSE, warning=FALSE}
 
 require(leaflet)
 require(mapview)
